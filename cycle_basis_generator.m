@@ -1,12 +1,39 @@
-function [cycles] = cycle_basis_generator(A, numcycles, using_cvx)
+function [cycles] = cycle_basis_generator(A, numcycles, Para_admm)
 % This function computes a number of cycles from an undirected graph with 
 % the target number of cycles
+% Input arguments:
+%   'A': A binary adjacency matrix that is symmetric and the non-zero
+%        entries indicate the edges
+%   'numcycles': the target number of edges, this number should be above
+%                num_edges - num_vertices + 1
+%   'Para_admm.using_cvx': if this flag is 1, then we use the cvx package
+%                          to solve the induced optimization problem. If
+%                          this flag is 0, then we use one of the two ADMM
+%                          solvers.
+%   'Para_admm.exact_solver': if this flag is 1, then we use the exact
+%                             sovler to solve any induced linear systems.
+%                             If this flag is 0, then we use the conjugate
+%                             gradient solver to solve the induced linear
+%                             system.
+%   'Para_admm.mu_init': Used in the ADMM solver. The default value is 1.
+%   'Para_admm.mu_rho': Used in the ADMM solver. The default value is 1.006
+%   'Para_admm.num_iters': Used in the ADMM solver. The default value is
+%                          600
+%   'Para_admm.cg_eps': A parameter for the cg solver for linear systems. 
+%                       1e-6 is the default value
+%   'Para_admm.cg_iters': A parameter for the cg solver for linear systems.
+%                         50 is the default value
+%   Output argument:
+%    'cycles': each cycle has three fields, i.e., weight that indicates the
+%    importance of this cycle, 'cycle': an ordered list of vertices, and
+%    'oriId', which indicates its index of the candidate cycles. 
 numV = size(A, 1);
-%
+% Get the neighbors of each vertex
 for id = 1 : numV
     neighborIds{id} = find(A(id,:) ~= 0);
 end
-%
+
+% Compute candidate cycles via breadth-first spanning trees
 parentIds = cell(1, numV);
 depths = zeros(1, numV);
 for id = 1 : numV
@@ -29,29 +56,24 @@ for vId = 1 : numV
         constraintIds = startId:endId;
     end
 end
-%
+
+% Use the condition number to select cycles
+% Remove null spaces
 J = generate_jacobi_matrix(cand_cycles, edgeMatrix);
 eps2 = 1/4/(numE-numV+1);
-if using_cvx
+% Choose one of optimizers to optimize the cycle weights
+if Para_admm.using_cvx == 1
     cycleWeights = cycle_weight_opt_cvx(J, constraintIds, eps2);
 else
-    cycleWieghts = cycle_weight_opt_admm(J, constraintIds, eps2);
+    cycleWeights = cycle_weight_opt_admm(J, constraintIds, eps2, Para_admm);
 end
-%
+% Use the weights to guide cycle selection
 [cycles] = cycle_sampling(cand_cycles, cycleWeights,...
     constraintIds, numcycles);
-%
-% A = J*diag(cycleWeights)*J';
-% ids = zeros(2,length(cycles));
-% for id = 1 : length(cycles)
-%     ids(1,id) = cycles{id}.oriId;
-%     ids(2,id) = cycles{id}.weight;
-% end
-% A1 = J(:,ids(1,:))*diag(ids(2,:))*J(:,ids(1,:))';
-% h = 10;
 
 function [J] = generate_jacobi_matrix(cycles, edgeMatrix)
-%
+% Generate the matrix whose rows index through the edges and whose column
+% index through the cycles of the underlying graph.
 numE = max(max(edgeMatrix));
 numC = length(cycles);
 numE_total = 0;
